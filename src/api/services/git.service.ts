@@ -234,7 +234,8 @@ export class GitService {
 
       // Check if there's anything to commit after staging
       const status = await git.status();
-      if (status.staged.length === 0) {
+      logger.debug(`Staged: ${status.staged.length} files, Renamed: ${status.renamed.length} files`);
+      if (status.staged.length === 0 && status.renamed.length === 0) {
         logger.debug('No changes staged for commit');
         throw new Error('No changes to commit after staging');
       }
