@@ -1,5 +1,6 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import matter from 'gray-matter';
 import {
   SlashCommandConfig,
   SubagentConfig,
@@ -146,18 +147,15 @@ export class ClaudeConfigService {
       const fileName = `${name}.md`;
       const filePath = path.join(commandsDir, fileName);
 
-      // Generate markdown content
-      let content = '';
+      // Generate markdown content with proper YAML frontmatter
+      let content: string;
 
-      // Add frontmatter if provided
+      // Add frontmatter if provided using gray-matter for proper serialization
       if (config.frontmatter && Object.keys(config.frontmatter).length > 0) {
-        content += '---\n';
-        content += this.generateFrontmatter(config.frontmatter);
-        content += '---\n\n';
+        content = this.formatMarkdownWithFrontmatter(config.frontmatter, config.content);
+      } else {
+        content = config.content;
       }
-
-      // Add command content
-      content += config.content;
 
       // Ensure trailing newline
       if (!content.endsWith('\n')) {
@@ -191,13 +189,8 @@ export class ClaudeConfigService {
       const fileName = `${name}.md`;
       const filePath = path.join(agentsDir, fileName);
 
-      // Generate markdown content with frontmatter
-      let content = '---\n';
-      content += this.generateFrontmatter(config.frontmatter);
-      content += '---\n\n';
-
-      // Add system prompt
-      content += config.content;
+      // Generate markdown content with proper YAML frontmatter using gray-matter
+      let content = this.formatMarkdownWithFrontmatter(config.frontmatter, config.content);
 
       // Ensure trailing newline
       if (!content.endsWith('\n')) {
@@ -215,15 +208,23 @@ export class ClaudeConfigService {
 
 
   /**
-   * Generate YAML frontmatter from object
+   * Format markdown content with YAML frontmatter using gray-matter
+   * Properly handles special characters, quotes, newlines, and XML-like tags
    */
-  private generateFrontmatter(metadata: Record<string, any>): string {
-    let frontmatter = '';
-
-    for (const [key, value] of Object.entries(metadata)) {
-      frontmatter += `${key}: ${value}\n`;
+  private formatMarkdownWithFrontmatter(
+    frontmatter: Record<string, any>,
+    content: string
+  ): string {
+    // Filter out null/undefined values before serialization
+    const filteredFrontmatter: Record<string, any> = {};
+    for (const [key, value] of Object.entries(frontmatter)) {
+      if (value !== undefined && value !== null) {
+        filteredFrontmatter[key] = value;
+      }
     }
 
-    return frontmatter;
+    // Use gray-matter's stringify for proper YAML serialization
+    // This handles all edge cases: quotes, newlines, XML tags, special characters
+    return matter.stringify(content, filteredFrontmatter);
   }
 }

@@ -17,6 +17,7 @@
     "express": "^4.19.2",
     "glob": "^11.0.3",
     "google-auth-library": "^10.2.1",
+    "gray-matter": "^4.0.3",
     "simple-git": "^3.28.0"
   },
   "devDependencies": {
