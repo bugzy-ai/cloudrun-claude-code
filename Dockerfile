@@ -59,7 +59,7 @@ RUN playwright install ffmpeg
 
 # Install MCP servers globally
 # This prevents re-downloading packages at runtime for faster MCP startup
-RUN npm install -g @playwright/mcp @notionhq/notion-mcp-server simple-slack-mcp-server @mcp-tunnel/wrapper @bugzy-ai/jira-mcp-server @bugzy-ai/teams-mcp-server @bugzy-ai/resend-mcp-server @bugzy-ai/github-mcp-server @bugzy-ai/azure-devops-mcp-server
+RUN npm install -g @playwright/mcp @notionhq/notion-mcp-server simple-slack-mcp-server @mcp-tunnel/wrapper @bugzy-ai/jira-mcp-server @bugzy-ai/jira-cloud-mcp-server @bugzy-ai/teams-mcp-server @bugzy-ai/resend-mcp-server @bugzy-ai/github-mcp-server @bugzy-ai/azure-devops-mcp-server
 
 # Set up environment
 ENV NODE_ENV=production
