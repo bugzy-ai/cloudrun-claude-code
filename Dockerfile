@@ -8,8 +8,13 @@ COPY src ./src
 RUN npm run build
 
 # ---- runtime stage ----
-FROM node:20-bookworm
+# Use slim base image - all required system deps are installed explicitly via apt-get below
+FROM node:20-bookworm-slim
 WORKDIR /app
+
+# Playwright version - should match bugzy-template-repo's @playwright/test version
+# Template uses ^1.48.0, pin to 1.50.1 (latest stable in that range)
+ARG PLAYWRIGHT_VERSION=1.50.1
 
 # Install system dependencies needed for Claude Code SDK and Playwright/Chromium
 # Enable backports to get OpenSSH 10.0 (supports Ed25519 PKCS#8 format keys)
@@ -42,24 +47,32 @@ RUN echo 'deb http://deb.debian.org/debian bookworm-backports main' > /etc/apt/s
   libxrandr2 \
   && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code globally via npm (always gets latest version)
-# This approach matches the GitHub Action implementation and simplifies version management
-RUN npm install -g @anthropic-ai/claude-code
-
-# Install Playwright package globally for MCP compatibility
 # Set browser path to shared location accessible by all users
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
-RUN npm install -g playwright@1.56.1
 
-# Install Playwright browsers and dependencies as root
-# This ensures browsers are in shared location and system deps are properly installed
-RUN playwright install chromium
-RUN playwright install-deps chromium
-RUN playwright install ffmpeg
+# Disable Claude Code auto-updater (container images should be immutable)
+ENV DISABLE_AUTOUPDATER=1
 
-# Install MCP servers globally
-# This prevents re-downloading packages at runtime for faster MCP startup
-RUN npm install -g @playwright/mcp @notionhq/notion-mcp-server simple-slack-mcp-server @mcp-tunnel/wrapper @bugzy-ai/jira-mcp-server @bugzy-ai/jira-cloud-mcp-server @bugzy-ai/teams-mcp-server @bugzy-ai/resend-mcp-server @bugzy-ai/github-mcp-server @bugzy-ai/azure-devops-mcp-server
+# Install all global npm packages in a single layer, then clean npm cache
+# This reduces image size by ~150-200MB and consolidates 3 separate RUN layers
+RUN npm install -g \
+  @anthropic-ai/claude-code \
+  playwright@${PLAYWRIGHT_VERSION} \
+  @playwright/mcp \
+  @notionhq/notion-mcp-server \
+  simple-slack-mcp-server \
+  @mcp-tunnel/wrapper \
+  @bugzy-ai/jira-mcp-server \
+  @bugzy-ai/jira-cloud-mcp-server \
+  @bugzy-ai/teams-mcp-server \
+  @bugzy-ai/resend-mcp-server \
+  @bugzy-ai/github-mcp-server \
+  @bugzy-ai/azure-devops-mcp-server \
+  && npm cache clean --force
+
+# Install Playwright browsers (chromium + ffmpeg) in a single layer
+# System deps are already installed via apt-get above, so install-deps is not needed
+RUN playwright install chromium && playwright install ffmpeg
 
 # Set up environment
 ENV NODE_ENV=production
@@ -94,15 +107,11 @@ RUN useradd -m -u 1001 -s /bin/bash serveruser && \
   # Make Playwright browsers writable by claudeuser for MCP temp directories
   chown -R claudeuser:claudeuser /opt/ms-playwright
 
-# Configure git for claudeuser
+# Configure git for claudeuser and switch to claudeuser for running the server
+# Server code in /app is owned by serveruser with 755 permissions
+# claudeuser can read and execute, but not modify the code
 USER claudeuser
 RUN git config --global core.sshCommand "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-
-# Switch to claudeuser to run the main server
-# Server code in /app is owned by serveruser with 750 permissions
-# claudeuser can execute but not read the code (relies on node loading it)
-# This allows spawning Claude as the same user without uid/gid switching
-USER claudeuser
 
 EXPOSE 8080
 CMD ["node", "dist/server.js"]
