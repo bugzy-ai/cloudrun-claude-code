@@ -23,22 +23,24 @@ echo "Job Name: ${JOB_NAME}"
 echo ""
 
 # Get the latest image from Artifact Registry
-REPOSITORY="${LOCATION}-docker.pkg.dev/${PROJECT_ID}/claude-code"
-IMAGE="${REPOSITORY}/${IMAGE_NAME}:latest"
+REPOSITORY_NAME="${REPOSITORY:-claude-code}"
+REPOSITORY_PATH="${LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY_NAME}"
+IMAGE="${REPOSITORY_PATH}/${IMAGE_NAME}:latest"
 
 echo "📦 Using image: ${IMAGE}"
 
 # Get service account from the service
 echo "🔍 Finding service account..."
-SERVICE_SA=$(gcloud run services describe bugzy-agent \
+SERVICE_SA=$(gcloud run services describe "${SERVICE_NAME}" \
   --region="${LOCATION}" \
   --format='value(spec.template.spec.serviceAccountName)' \
   --project="${PROJECT_ID}" 2>/dev/null || echo "")
 
 if [ -z "$SERVICE_SA" ]; then
-  echo "⚠️  Service 'bugzy-agent' not found"
+  echo "⚠️  Service '${SERVICE_NAME}' not found"
   echo "Using default compute service account"
-  SERVICE_SA="${PROJECT_ID}@appspot.gserviceaccount.com"
+  PROJECT_NUMBER=$(gcloud projects describe "${PROJECT_ID}" --format="value(projectNumber)")
+  SERVICE_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
 fi
 
 echo "✅ Service account: ${SERVICE_SA}"

@@ -31,7 +31,6 @@ export class SimpleAnthropicProxy {
       this.server = http.createServer((clientReq, clientRes) => {
         const requestUrl = clientReq.url || '/';
         logger.debug(`[Proxy] ${clientReq.method} ${requestUrl}`);
-        logger.debug('[Proxy] Incoming headers from Claude:', JSON.stringify(clientReq.headers, null, 2));
 
         // When using ANTHROPIC_BASE_URL, Claude SDK sends requests like:
         // GET http://localhost:8765/v1/messages

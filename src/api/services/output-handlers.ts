@@ -5,6 +5,7 @@ import { GCSLoggerService, TaskLogger } from "./gcs.service.js";
 import { GitService } from "./git.service.js";
 import { AsyncTaskResult, AsyncTaskMetadata } from "../types/async-task.types.js";
 import { logger } from "../../utils/logger.js";
+import { readMcpErrorLog } from "../../utils/mcp-log-reader.js";
 
 /**
  * OutputHandler interface
@@ -133,6 +134,8 @@ export class GCSOutputHandler implements OutputHandler {
   private errorCount = 0;
   private startedAt: string;
   private configFiles?: string[]; // Track dynamically created config files for git exclusion
+  private initProcessed = false;
+  private mcpServerStatuses: Array<{name: string, status: string}> = [];
 
   constructor(
     private taskId: string,
@@ -203,6 +206,13 @@ export class GCSOutputHandler implements OutputHandler {
       // Track metrics from JSONL output
       try {
         const message = JSON.parse(line);
+
+        // Check for system init message (MCP server statuses)
+        if (!this.initProcessed && message.type === 'system' && message.subtype === 'init') {
+          this.initProcessed = true;
+          this.processInitMessage(message);
+        }
+
         if (message.type === 'turn_complete') {
           this.turnCount++;
         } else if (message.type === 'error') {
@@ -464,6 +474,65 @@ export class GCSOutputHandler implements OutputHandler {
       logger.debug(`[TASK ${this.taskId}] GCS logger closed`);
     } catch (error: any) {
       logger.error(`[TASK ${this.taskId}] Failed to close GCS logger:`, error.message);
+    }
+  }
+
+  /**
+   * Process the system init message to detect MCP server health
+   */
+  private processInitMessage(message: any): void {
+    const mcpServers: Array<{name: string, status: string}> | undefined = message.mcp_servers;
+
+    if (!mcpServers || mcpServers.length === 0) {
+      logger.info(`[TASK ${this.taskId}] No MCP servers configured`);
+      return;
+    }
+
+    this.mcpServerStatuses = mcpServers;
+
+    const connected = mcpServers.filter(s => s.status === 'connected');
+    const failed = mcpServers.filter(s => s.status !== 'connected');
+
+    // Build summary string: "slack: connected, jira: failed, ..."
+    const statusDetails = mcpServers.map(s => `${s.name}: ${s.status}`).join(', ');
+    const summary = `[TASK ${this.taskId}] MCP servers: ${connected.length}/${mcpServers.length} connected (${statusDetails})`;
+
+    if (failed.length === mcpServers.length) {
+      // ALL servers failed
+      logger.error(summary);
+    } else if (failed.length > 0) {
+      // Some servers failed
+      logger.warn(summary);
+    } else {
+      // All connected
+      logger.info(summary);
+    }
+
+    // Log each failed server individually
+    for (const server of failed) {
+      logger.warn(`[TASK ${this.taskId}] MCP server '${server.name}' failed to connect (status: ${server.status})`);
+      // Fire-and-forget: read detailed error logs from filesystem
+      readMcpErrorLog(server.name, this.workspaceRoot).then(result => {
+        if (!result.found) {
+          logger.warn(`[TASK ${this.taskId}] ${result.reason}`);
+          return;
+        }
+        if (result.entries) {
+          for (const entry of result.entries) {
+            if (entry.error) {
+              logger.error(`[TASK ${this.taskId}] MCP [${server.name}] ${entry.error}`);
+            }
+            if (entry.debug && typeof entry.debug === 'string' && entry.debug.includes('Connection failed')) {
+              logger.error(`[TASK ${this.taskId}] MCP [${server.name}] ${entry.debug}`);
+            }
+          }
+        } else if (result.rawContent) {
+          logger.warn(`[TASK ${this.taskId}] Could not parse MCP log file for '${server.name}' as JSON, raw content:`);
+          logger.warn(`[TASK ${this.taskId}] MCP [${server.name}] ${result.rawContent}`);
+        }
+      }).catch(err => {
+        logger.warn(`[TASK ${this.taskId}] Failed to read MCP error log for '${server.name}': ${err.message}`);
+      });
     }
   }
 

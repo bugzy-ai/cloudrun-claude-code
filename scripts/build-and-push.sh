@@ -75,7 +75,6 @@ gcloud builds submit \
   --tag "${IMAGE_URL}" \
   --project "${PROJECT_ID}" \
   --timeout=20m \
-  --build-arg "PLAYWRIGHT_VERSION=${PLAYWRIGHT_VERSION}" \
   .
 
 if [ $? -eq 0 ]; then

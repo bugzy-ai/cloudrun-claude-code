@@ -29,6 +29,17 @@ echo "Key Ring: ${KEYRING}"
 echo "Key: ${KEY}"
 echo ""
 
+# Ensure Cloud KMS API is enabled
+echo "Checking Cloud KMS API..."
+if ! gcloud services list --enabled --project="${PROJECT_ID}" 2>/dev/null | grep -q "cloudkms.googleapis.com"; then
+  echo "Enabling Cloud KMS API..."
+  gcloud services enable cloudkms.googleapis.com --project="${PROJECT_ID}"
+  echo "Waiting for API propagation..."
+  sleep 30
+fi
+echo "✅ Cloud KMS API enabled"
+echo ""
+
 # Create key ring (idempotent - fails silently if exists)
 echo "📦 Creating key ring: ${KEYRING}"
 gcloud kms keyrings create "${KEYRING}" \
@@ -50,13 +61,13 @@ gcloud kms keys create "${KEY}" \
 # Get service account
 echo ""
 echo "🔍 Finding service account..."
-SERVICE_SA=$(gcloud run services describe bugzy-agent \
+SERVICE_SA=$(gcloud run services describe "${SERVICE_NAME}" \
   --region="${LOCATION}" \
   --format='value(spec.template.spec.serviceAccountName)' \
   --project="${PROJECT_ID}" 2>/dev/null || echo "")
 
 if [ -z "$SERVICE_SA" ]; then
-  echo "⚠️  Service 'bugzy-agent' not found in ${LOCATION}"
+  echo "⚠️  Service '${SERVICE_NAME}' not found in ${LOCATION}"
   echo "⚠️  Deploy the service first, then run this script again to grant KMS permissions"
 else
   echo "✅ Service account: ${SERVICE_SA}"

@@ -29,15 +29,15 @@ echo ""
 
 # Get service account from the service
 echo "🔍 Finding service account..."
-SERVICE_SA=$(gcloud run services describe bugzy-agent \
+SERVICE_SA=$(gcloud run services describe "${SERVICE_NAME}" \
   --region="${LOCATION}" \
   --format='value(spec.template.spec.serviceAccountName)' \
   --project="${PROJECT_ID}" 2>/dev/null || echo "")
 
 if [ -z "$SERVICE_SA" ]; then
-  echo "❌ Service 'bugzy-agent' not found in ${LOCATION}"
-  echo "Deploy the service first before granting permissions"
-  exit 1
+  echo "⚠️  Service '${SERVICE_NAME}' not found, using default compute service account"
+  PROJECT_NUMBER=$(gcloud projects describe "${PROJECT_ID}" --format="value(projectNumber)")
+  SERVICE_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
 fi
 
 echo "✅ Service account: ${SERVICE_SA}"

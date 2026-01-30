@@ -53,10 +53,14 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 # Disable Claude Code auto-updater (container images should be immutable)
 ENV DISABLE_AUTOUPDATER=1
 
-# Install all global npm packages in a single layer, then clean npm cache
-# This reduces image size by ~150-200MB and consolidates 3 separate RUN layers
+# Install Claude Code natively (self-contained binary, no Node.js dependency)
+# The installer places the binary at ~/.local/bin/claude -> ~/.local/share/claude/versions/<ver>
+# Copy the resolved binary to /usr/local/bin so it's accessible to all users
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+  && cp "$(readlink -f /root/.local/bin/claude)" /usr/local/bin/claude
+
+# Install remaining global npm packages in a single layer, then clean npm cache
 RUN npm install -g \
-  @anthropic-ai/claude-code \
   playwright@${PLAYWRIGHT_VERSION} \
   @playwright/mcp \
   @notionhq/notion-mcp-server \
