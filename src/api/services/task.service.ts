@@ -371,6 +371,8 @@ export class TaskService {
             CI: 'true',
             // Explicitly set HOME for npm config location
             HOME: process.env.HOME || '/home/claudeuser',
+            // Override production NODE_ENV so npm install includes devDependencies
+            NODE_ENV: '',
           },
           encoding: 'utf-8',
           // 5 minute timeout per command
