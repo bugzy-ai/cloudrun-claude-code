@@ -12,9 +12,8 @@ RUN npm run build
 FROM node:20-bookworm-slim
 WORKDIR /app
 
-# Playwright version - should match bugzy-template-repo's @playwright/test version
-# Template uses ^1.48.0, pin to 1.50.1 (latest stable in that range)
-ARG PLAYWRIGHT_VERSION=1.50.1
+# Copy package version manifest (single source of truth for third-party versions)
+COPY .package-versions.env /tmp/.package-versions.env
 
 # Install system dependencies needed for Claude Code SDK and Playwright/Chromium
 # Enable backports to get OpenSSH 10.0 (supports Ed25519 PKCS#8 format keys)
@@ -59,11 +58,12 @@ ENV DISABLE_AUTOUPDATER=1
 RUN curl -fsSL https://claude.ai/install.sh | bash \
   && cp "$(readlink -f /root/.local/bin/claude)" /usr/local/bin/claude
 
-# Install remaining global npm packages in a single layer, then clean npm cache
-RUN npm install -g \
+# Install global npm packages — third-party pinned from .package-versions.env, our packages unpinned
+RUN . /tmp/.package-versions.env && \
+  npm install -g \
   playwright@${PLAYWRIGHT_VERSION} \
-  @playwright/mcp \
-  @notionhq/notion-mcp-server \
+  @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
+  @notionhq/notion-mcp-server@${NOTION_MCP_VERSION} \
   simple-slack-mcp-server \
   @mcp-tunnel/wrapper \
   @bugzy-ai/jira-mcp-server \
@@ -74,9 +74,11 @@ RUN npm install -g \
   @bugzy-ai/azure-devops-mcp-server \
   && npm cache clean --force
 
-# Install Playwright browsers (chromium + ffmpeg) in a single layer
-# System deps are already installed via apt-get above, so install-deps is not needed
-RUN playwright install chromium && playwright install ffmpeg
+# Install Playwright browsers for both consumers:
+# 1. Global playwright (used by project's @playwright/test) — chromium + ffmpeg
+# 2. @playwright/mcp's bundled playwright — chromium only (different revision)
+RUN playwright install chromium && playwright install ffmpeg && \
+  /usr/local/lib/node_modules/@playwright/mcp/node_modules/.bin/playwright install chromium
 
 # Set up environment
 ENV NODE_ENV=production

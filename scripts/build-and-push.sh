@@ -15,12 +15,6 @@ REPOSITORY="${REPOSITORY:-claude-code}"
 IMAGE_NAME="${IMAGE_NAME:-claude-code}"
 TAG="${TAG:-latest}"
 
-# Playwright version - should match bugzy-template-repo's @playwright/test version
-# Default to 1.50.1 (latest stable compatible with ^1.48.0)
-# Override via: PLAYWRIGHT_VERSION=1.52.0 ./scripts/build-and-push.sh
-PLAYWRIGHT_VERSION="${PLAYWRIGHT_VERSION:-1.50.1}"
-echo "Using Playwright version: ${PLAYWRIGHT_VERSION}"
-
 # Enable required APIs
 echo "Checking required APIs..."
 APIS_TO_ENABLE=""
@@ -69,7 +63,7 @@ IMAGE_URL="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:${
 echo "Building and pushing image: ${IMAGE_URL}"
 
 # Build and push the image using Cloud Build
-# Pass PLAYWRIGHT_VERSION as build-arg to ensure container matches template repo version
+# Package versions are baked into .package-versions.env (COPY'd in Dockerfile)
 echo "Building and pushing Docker image..."
 gcloud builds submit \
   --tag "${IMAGE_URL}" \
