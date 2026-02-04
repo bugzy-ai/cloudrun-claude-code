@@ -81,7 +81,6 @@ RUN playwright install chromium && playwright install ffmpeg && \
   /usr/local/lib/node_modules/@playwright/mcp/node_modules/.bin/playwright install chromium
 
 # Set up environment
-ENV NODE_ENV=production
 ENV NODE_PATH=/usr/local/lib/node_modules
 ENV PATH="/usr/local/lib/node_modules/.bin:${PATH}"
 
