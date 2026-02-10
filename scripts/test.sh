@@ -330,9 +330,9 @@ test_remote() {
   fi
 }
 
-# Test Playwright MCP
+# Test playwright-cli
 test_playwright() {
-  print_header "Testing Playwright MCP on Cloud Run"
+  print_header "Testing playwright-cli on Cloud Run"
 
   # Get service URL if not provided
   if [ -z "$SERVICE_URL" ]; then
@@ -368,44 +368,31 @@ test_playwright() {
     return 1
   fi
 
-  # Test Playwright MCP with simple navigation
-  echo -e "\n1. Testing Playwright MCP - Simple Navigation:"
-  print_info "This test will use Playwright to navigate to example.com and get the page title"
+  # Test playwright-cli with simple navigation
+  echo -e "\n1. Testing playwright-cli - Simple Navigation:"
+  print_info "This test will use playwright-cli to navigate to example.com and get the page title"
 
   RESPONSE=$(curl -s -X POST "${SERVICE_URL}/run" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer ${AUTH_TOKEN}" \
     --max-time 180 \
     -d "{
-      \"prompt\": \"Using the Playwright MCP, navigate to https://example.com in headless mode with --no-sandbox, get the page title, and tell me what it is.\",
+      \"prompt\": \"Using playwright-cli, open https://example.com, take a snapshot, and tell me the page title.\",
       ${ANTHROPIC_AUTH},
-      \"mcpConfigJson\": {
-        \"mcpServers\": {
-          \"playwright\": {
-            \"command\": \"npx\",
-            \"args\": [
-              \"-y\",
-              \"@playwright/mcp@latest\",
-              \"--headless\",
-              \"--no-sandbox\"
-            ]
-          }
-        }
-      },
       \"maxTurns\": 5,
-      \"allowedTools\": [\"mcp__playwright__*\"],
+      \"allowedTools\": [\"Bash(playwright-cli:*)\"],
       \"permissionMode\": \"bypassPermissions\"
     }" 2>&1)
 
   # Check for successful response
   if echo "$RESPONSE" | grep -q '"type":"assistant"' && echo "$RESPONSE" | grep -qi "example"; then
-    print_success "Playwright MCP test successful"
+    print_success "playwright-cli test successful"
     echo "$RESPONSE" | grep -o '"text":"[^"]*Example[^"]*"' | head -1 | sed 's/"text"://; s/"//g'
   elif echo "$RESPONSE" | grep -qi "error"; then
-    print_error "Playwright MCP test failed with error"
+    print_error "playwright-cli test failed with error"
     echo "$RESPONSE" | grep -i "error" | head -5
   else
-    print_error "Playwright MCP test completed but result unclear"
+    print_error "playwright-cli test completed but result unclear"
     echo "$RESPONSE" | head -20
   fi
 }

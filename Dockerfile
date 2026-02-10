@@ -62,7 +62,7 @@ RUN curl -fsSL https://claude.ai/install.sh | bash \
 RUN . /tmp/.package-versions.env && \
   npm install -g \
   playwright@${PLAYWRIGHT_VERSION} \
-  @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
+  @playwright/cli@${PLAYWRIGHT_CLI_VERSION} \
   @notionhq/notion-mcp-server@${NOTION_MCP_VERSION} \
   simple-slack-mcp-server \
   @mcp-tunnel/wrapper \
@@ -76,9 +76,9 @@ RUN . /tmp/.package-versions.env && \
 
 # Install Playwright browsers for both consumers:
 # 1. Global playwright (used by project's @playwright/test) — chromium + ffmpeg
-# 2. @playwright/mcp's bundled playwright — chromium only (different revision)
+# 2. @playwright/cli's bundled playwright — chromium only (different revision)
 RUN playwright install chromium && playwright install ffmpeg && \
-  /usr/local/lib/node_modules/@playwright/mcp/node_modules/.bin/playwright install chromium
+  /usr/local/lib/node_modules/@playwright/cli/node_modules/.bin/playwright install chromium
 
 # Set up environment
 ENV NODE_PATH=/usr/local/lib/node_modules
@@ -117,6 +117,10 @@ RUN useradd -m -u 1001 -s /bin/bash serveruser && \
 # claudeuser can read and execute, but not modify the code
 USER claudeuser
 RUN git config --global core.sshCommand "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+
+# Install playwright-cli skills for Claude Code agent discovery (must run as claudeuser)
+# Run from home dir since WORKDIR /app is owned by serveruser (read-only for claudeuser)
+RUN cd ~ && playwright-cli install --skills
 
 EXPOSE 8080
 CMD ["node", "dist/server.js"]
