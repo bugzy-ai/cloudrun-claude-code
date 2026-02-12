@@ -39,10 +39,12 @@ export class ClaudeRunner {
   private pipePath: string;
   private promptPath: string;
   private lineBuffer = ""; // Buffer for incomplete lines from stdout
+  private shutdownGracePeriodMs: number;
 
-  constructor(private workspaceRoot: string) {
+  constructor(private workspaceRoot: string, options?: { shutdownGracePeriodMs?: number }) {
     this.pipePath = path.join(workspaceRoot, "claude_prompt_pipe");
     this.promptPath = path.join(workspaceRoot, "prompt.txt");
+    this.shutdownGracePeriodMs = options?.shutdownGracePeriodMs ?? 60000;
   }
 
   private async createNamedPipe(): Promise<void> {
@@ -173,6 +175,10 @@ export class ClaudeRunner {
     let output = "";
     let errorOutput = "";
 
+    // Post-result shutdown: tracks whether Claude has emitted its final result
+    let resolved = false;
+    let shutdownTimeoutId: ReturnType<typeof setTimeout> | undefined;
+
     this.process.stdout?.on("data", (data) => {
       const text = data.toString();
       output += text;
@@ -190,6 +196,17 @@ export class ClaudeRunner {
       lines.forEach((line: string) => {
         if (line.trim() !== "") {
           onData(line);
+
+          // Detect result event - start shutdown grace period
+          if (!shutdownTimeoutId && line.includes('"type":"result"')) {
+            logger.info('Claude result received - starting 60s shutdown grace period');
+            shutdownTimeoutId = setTimeout(() => {
+              if (!resolved) {
+                logger.warn(`Claude process did not exit within ${this.shutdownGracePeriodMs / 1000}s of result - force killing`);
+                this.kill();
+              }
+            }, this.shutdownGracePeriodMs);
+          }
         }
       });
     });
@@ -211,15 +228,13 @@ export class ClaudeRunner {
     // Wait for completion with timeout (default: 55 minutes, max: 1440 minutes / 24 hours for Cloud Run Jobs)
     const timeoutMs = (options.timeoutMinutes || 55) * 60 * 1000;
 
-    return new Promise((resolve) => {
-      let resolved = false;
-
+    return new Promise((resolve_) => {
       const timeoutId = setTimeout(() => {
         if (!resolved) {
           logger.error(`Claude process timed out after ${timeoutMs / 1000} seconds`);
           this.kill();
           resolved = true;
-          resolve({
+          resolve_({
             exitCode: 124,
             output,
             error: "Process timed out"
@@ -230,6 +245,7 @@ export class ClaudeRunner {
       this.process!.on("close", (code) => {
         if (!resolved) {
           clearTimeout(timeoutId);
+          if (shutdownTimeoutId) clearTimeout(shutdownTimeoutId);
           resolved = true;
 
           // Flush any remaining buffered line
@@ -249,7 +265,7 @@ export class ClaudeRunner {
           // Clean up pipe file
           unlink(this.pipePath).catch(() => { });
 
-          resolve({
+          resolve_({
             exitCode: code || 0,
             output,
             error: errorOutput || undefined
@@ -260,8 +276,9 @@ export class ClaudeRunner {
       this.process!.on("error", (error) => {
         if (!resolved) {
           clearTimeout(timeoutId);
+          if (shutdownTimeoutId) clearTimeout(shutdownTimeoutId);
           resolved = true;
-          resolve({
+          resolve_({
             exitCode: 1,
             output,
             error: error.message
@@ -321,6 +338,10 @@ export class ClaudeRunner {
     let output = "";
     let errorOutput = "";
 
+    // Post-result shutdown: tracks whether Claude has emitted its final result
+    let resolved = false;
+    let shutdownTimeoutId: ReturnType<typeof setTimeout> | undefined;
+
     this.process.stdout?.on("data", (data) => {
       const text = data.toString();
       output += text;
@@ -338,6 +359,17 @@ export class ClaudeRunner {
       lines.forEach((line: string) => {
         if (line.trim() !== "") {
           onData(line);
+
+          // Detect result event - start shutdown grace period
+          if (!shutdownTimeoutId && line.includes('"type":"result"')) {
+            logger.info('Claude result received - starting 60s shutdown grace period');
+            shutdownTimeoutId = setTimeout(() => {
+              if (!resolved) {
+                logger.warn(`Claude process did not exit within ${this.shutdownGracePeriodMs / 1000}s of result - force killing`);
+                this.kill();
+              }
+            }, this.shutdownGracePeriodMs);
+          }
         }
       });
     });
@@ -350,15 +382,13 @@ export class ClaudeRunner {
     // Wait for completion with timeout (default: 55 minutes, max: 1440 minutes / 24 hours for Cloud Run Jobs)
     const timeoutMs = (options.timeoutMinutes || 55) * 60 * 1000;
 
-    return new Promise((resolve) => {
-      let resolved = false;
-
+    return new Promise((resolve_) => {
       const timeoutId = setTimeout(() => {
         if (!resolved) {
           logger.error(`Claude process timed out after ${timeoutMs / 1000} seconds`);
           this.kill();
           resolved = true;
-          resolve({
+          resolve_({
             exitCode: 124,
             output,
             error: "Process timed out"
@@ -369,6 +399,7 @@ export class ClaudeRunner {
       this.process!.on("close", (code) => {
         if (!resolved) {
           clearTimeout(timeoutId);
+          if (shutdownTimeoutId) clearTimeout(shutdownTimeoutId);
           resolved = true;
 
           // Flush any remaining buffered line
@@ -377,7 +408,7 @@ export class ClaudeRunner {
             this.lineBuffer = "";
           }
 
-          resolve({
+          resolve_({
             exitCode: code || 0,
             output,
             error: errorOutput || undefined
@@ -388,8 +419,9 @@ export class ClaudeRunner {
       this.process!.on("error", (error) => {
         if (!resolved) {
           clearTimeout(timeoutId);
+          if (shutdownTimeoutId) clearTimeout(shutdownTimeoutId);
           resolved = true;
-          resolve({
+          resolve_({
             exitCode: 1,
             output,
             error: error.message
