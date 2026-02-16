@@ -138,7 +138,7 @@ export class ClaudeRunner {
       // Claude-specific flags
       CLAUDE_CODE_ACTION: '1',
       CLAUDE_CODE_ENTRYPOINT: 'cli',
-      CLAUDECODE: '1',
+      // Do NOT set CLAUDECODE — newer CLI versions treat it as nested session detection
     };
 
     // Start sending prompt to pipe in background
@@ -310,7 +310,7 @@ export class ClaudeRunner {
       // Claude-specific flags
       CLAUDE_CODE_ACTION: '1',
       CLAUDE_CODE_ENTRYPOINT: 'cli',
-      CLAUDECODE: '1',
+      // Do NOT set CLAUDECODE — newer CLI versions treat it as nested session detection
     };
 
     // Spawn Claude process (runs as same user - claudeuser)

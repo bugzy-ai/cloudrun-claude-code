@@ -99,6 +99,21 @@ export interface AsyncTaskResult {
     sizeBytes: number;
   }>;
 
+  /** External test repo PR information (if externalTestRepo was configured and changes were made) */
+  externalRepoPR?: {
+    /** PR URL on the external test repo */
+    url: string;
+
+    /** PR number */
+    number: number;
+
+    /** Full repo name (owner/repo) */
+    repo: string;
+
+    /** Branch that was pushed */
+    branch: string;
+  };
+
   /** Git commit information (if postExecutionActions.git was requested) */
   gitCommit?: {
     /** Commit SHA */

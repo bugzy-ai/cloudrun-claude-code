@@ -73,7 +73,7 @@ export class TaskService {
 
       // Set workspace details on output handler (for post-execution actions)
       if (outputHandler && 'setWorkspaceDetails' in outputHandler) {
-        (outputHandler as any).setWorkspaceDetails(workspaceRoot, sshKeyPath, configFiles);
+        (outputHandler as any).setWorkspaceDetails(workspaceRoot, sshKeyPath, configFiles, request.externalTestRepo);
       }
 
       // Setup environment (secrets, proxy config, SSH)
@@ -258,6 +258,24 @@ export class TaskService {
       // Update workspaceRoot to point to cloned repository
       workspaceRoot = repoPath;
       logger.debug(`${logPrefix} Repository cloned to: ${workspaceRoot}`);
+
+      // Initialize external test repo submodule if configured
+      if (request.externalTestRepo) {
+        const { url, branch, installationAccessToken, existingPrBranch, updateSubmoduleToLatest } = request.externalTestRepo;
+        const tokenUrl = this.gitService.buildTokenUrl(url, installationAccessToken);
+
+        logger.info(`${logPrefix} Initializing external test repo submodule: ${url} (branch: ${branch})`);
+        await this.gitService.initSubmodule(
+          workspaceRoot,
+          'tests',
+          url,
+          tokenUrl,
+          branch,
+          gitDepth,
+          { existingPrBranch, updateSubmoduleToLatest }
+        );
+        logger.info(`${logPrefix} ✓ External test repo ready at ./tests/`);
+      }
     }
 
     // Write Claude configuration files if provided

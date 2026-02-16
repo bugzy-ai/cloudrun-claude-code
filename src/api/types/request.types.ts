@@ -26,6 +26,19 @@ export interface RunRequest {
   mcpConfig?: Record<string, any>; // Raw .mcp.json content
   slashCommands?: Record<string, SlashCommandConfig>;
   subagents?: Record<string, SubagentConfig>;
+  /** External test repo configuration for BYOT (Bring Your Own Tests) */
+  externalTestRepo?: {
+    /** HTTPS URL of the customer's test repository */
+    url: string;
+    /** Base branch of the external test repo (default: main) */
+    branch: string;
+    /** Short-lived GitHub App installation access token */
+    installationAccessToken: string;
+    /** When iterating on PR feedback, check out this branch instead of base branch */
+    existingPrBranch?: string;
+    /** On merge events, pull latest base branch to advance submodule HEAD */
+    updateSubmoduleToLatest?: boolean;
+  };
 }
 
 export interface PostExecutionActions {

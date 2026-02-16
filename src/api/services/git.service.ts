@@ -562,6 +562,247 @@ export class GitService {
     }
   }
 
+  // =========================================================================
+  // Submodule Operations (for External Test Repo / BYOT)
+  // =========================================================================
+
+  /**
+   * Parse owner and repo name from a GitHub HTTPS URL
+   * e.g., "https://github.com/org/repo" → { owner: "org", repo: "repo" }
+   */
+  parseGitHubUrl(url: string): { owner: string; repo: string } {
+    const match = url.match(/github\.com\/([^\/]+)\/([^\/]+?)(\.git)?$/);
+    if (!match) {
+      throw new Error(`Cannot parse GitHub owner/repo from URL: ${url}`);
+    }
+    return { owner: match[1], repo: match[2] };
+  }
+
+  /**
+   * Build an HTTPS token-authenticated URL for git operations
+   * e.g., "https://x-access-token:{token}@github.com/org/repo.git"
+   */
+  buildTokenUrl(url: string, token: string): string {
+    const { owner, repo } = this.parseGitHubUrl(url);
+    return `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
+  }
+
+  /**
+   * Initialize an external test repo as a git submodule at the given path.
+   *
+   * Two-path logic:
+   * 1. If submodule not yet registered in .gitmodules → `git submodule add`
+   * 2. If already registered → override URL with token and `git submodule update --init`
+   *
+   * @param workspacePath - Root of the parent repo
+   * @param submodulePath - Relative path where submodule should live (e.g., "tests")
+   * @param repoUrl - Original HTTPS URL (for display/reference)
+   * @param tokenUrl - Token-authenticated URL for actual clone
+   * @param branch - Branch to checkout in the submodule
+   * @param depth - Clone depth (default: 1 for shallow)
+   */
+  async initSubmodule(
+    workspacePath: string,
+    submodulePath: string,
+    repoUrl: string,
+    tokenUrl: string,
+    branch: string = 'main',
+    depth: number = 1,
+    options?: {
+      /** Check out an existing PR branch after init (for PR iteration) */
+      existingPrBranch?: string;
+      /** Pull latest from base branch to advance HEAD (for merge events) */
+      updateSubmoduleToLatest?: boolean;
+    }
+  ): Promise<void> {
+    try {
+      const git = simpleGit(workspacePath);
+      const gitmodulesPath = path.join(workspacePath, '.gitmodules');
+
+      const isRegistered = fs.existsSync(gitmodulesPath) &&
+        fs.readFileSync(gitmodulesPath, 'utf-8').includes(`[submodule "${submodulePath}"]`);
+
+      if (!isRegistered) {
+        // First run: add the submodule
+        logger.info(`Adding submodule at ${submodulePath} (first run)`);
+        await git.raw([
+          'submodule', 'add',
+          '--depth', depth.toString(),
+          '-b', branch,
+          tokenUrl,
+          submodulePath
+        ]);
+        logger.info(`✓ Submodule added at ${submodulePath}`);
+      } else {
+        // Subsequent run: override URL with token and init
+        logger.info(`Initializing existing submodule at ${submodulePath}`);
+        await git.raw(['config', `submodule.${submodulePath}.url`, tokenUrl]);
+        await git.raw([
+          'submodule', 'update', '--init',
+          '--depth', depth.toString(),
+          submodulePath
+        ]);
+        logger.info(`✓ Submodule initialized at ${submodulePath}`);
+      }
+
+      // Post-init: check out existing PR branch or pull latest
+      const submoduleFullPath = path.join(workspacePath, submodulePath);
+      const subGit = simpleGit(submoduleFullPath);
+
+      if (options?.existingPrBranch) {
+        // Fetch and checkout the existing PR branch for iteration
+        logger.info(`Fetching and checking out existing PR branch: ${options.existingPrBranch}`);
+        await subGit.raw(['remote', 'set-url', 'origin', tokenUrl]);
+        await subGit.fetch(['origin', options.existingPrBranch, '--depth', depth.toString()]);
+        await subGit.checkout(options.existingPrBranch);
+        logger.info(`✓ Checked out existing PR branch: ${options.existingPrBranch}`);
+      } else {
+        // Always start from latest base branch — prevents stale submodule pointer
+        // issues and old commits leaking into new PRs
+        logger.info(`Fetching latest from base branch: ${branch}`);
+        await subGit.raw(['remote', 'set-url', 'origin', tokenUrl]);
+        await subGit.fetch(['origin', branch, '--depth', depth.toString()]);
+        await subGit.raw(['reset', '--hard', `origin/${branch}`]);
+        logger.info(`✓ Submodule HEAD at latest ${branch}`);
+      }
+    } catch (error: any) {
+      logger.error(`Failed to init submodule at ${submodulePath}:`, error.message);
+
+      if (error.message.includes('already exists') && !error.message.includes('submodule')) {
+        throw new Error(
+          `Cannot add submodule at '${submodulePath}' — a regular directory already exists there. ` +
+          `The external test repo requires that '${submodulePath}/' does not already exist as a regular directory.`
+        );
+      }
+
+      throw new Error(`Failed to initialize submodule: ${error.message}`);
+    }
+  }
+
+  /**
+   * Check if the submodule working tree has uncommitted changes
+   */
+  async hasSubmoduleChanges(workspacePath: string, submodulePath: string): Promise<boolean> {
+    try {
+      const submoduleFullPath = path.join(workspacePath, submodulePath);
+
+      if (!fs.existsSync(submoduleFullPath)) {
+        logger.debug(`Submodule path does not exist: ${submoduleFullPath}`);
+        return false;
+      }
+
+      const git = simpleGit(submoduleFullPath);
+      const status = await git.status();
+
+      const hasChanges = status.files.length > 0;
+      if (hasChanges) {
+        logger.debug(`Submodule ${submodulePath} has ${status.files.length} changed files`);
+      } else {
+        logger.debug(`Submodule ${submodulePath} has no changes`);
+      }
+
+      return hasChanges;
+    } catch (error: any) {
+      logger.error(`Failed to check submodule changes at ${submodulePath}:`, error.message);
+      throw new Error(`Failed to check submodule changes: ${error.message}`);
+    }
+  }
+
+  /**
+   * Commit and push changes in the submodule to a new branch.
+   * Creates a branch, stages all changes, commits, and pushes.
+   *
+   * @returns The commit SHA
+   */
+  async commitAndPushSubmodule(
+    workspacePath: string,
+    submodulePath: string,
+    branch: string,
+    message: string,
+    tokenUrl: string,
+    options?: {
+      /** When true, skip branch creation (already on the branch from initSubmodule) */
+      isExistingBranch?: boolean;
+    }
+  ): Promise<{ sha: string }> {
+    try {
+      const submoduleFullPath = path.join(workspacePath, submodulePath);
+      const git = simpleGit(submoduleFullPath);
+
+      // Configure identity
+      await this.configureIdentity(submoduleFullPath);
+
+      if (!options?.isExistingBranch) {
+        // Create and checkout new branch
+        logger.debug(`Creating branch ${branch} in submodule ${submodulePath}`);
+        await git.checkoutLocalBranch(branch);
+      } else {
+        logger.debug(`Using existing branch ${branch} in submodule ${submodulePath}`);
+      }
+
+      // Stage all changes
+      await git.add('-A');
+
+      // Commit
+      const commitResult = await git.commit(message);
+      logger.info(`✓ Submodule commit: ${commitResult.commit}`);
+
+      // Set remote URL to token-authenticated URL and push
+      await git.raw(['remote', 'set-url', 'origin', tokenUrl]);
+      await git.push(['-u', 'origin', branch]);
+      logger.info(`✓ Submodule pushed to ${branch}`);
+
+      return { sha: commitResult.commit };
+    } catch (error: any) {
+      logger.error(`Failed to commit and push submodule ${submodulePath}:`, error.message);
+      throw new Error(`Failed to commit and push submodule: ${error.message}`);
+    }
+  }
+
+  /**
+   * Create a pull request on a GitHub repository using the REST API.
+   *
+   * @returns PR number and URL
+   */
+  async createPullRequest(
+    owner: string,
+    repo: string,
+    head: string,
+    base: string,
+    title: string,
+    body: string,
+    token: string
+  ): Promise<{ number: number; url: string }> {
+    try {
+      logger.info(`Creating PR: ${owner}/${repo} ${head} → ${base}`);
+
+      const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/vnd.github+json',
+          'Content-Type': 'application/json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'bugzy-cloudrun-claude-code',
+        },
+        body: JSON.stringify({ title, body, head, base }),
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(`GitHub API returned ${response.status}: ${errorBody}`);
+      }
+
+      const pr = await response.json() as { number: number; html_url: string };
+      logger.info(`✓ PR created: ${pr.html_url}`);
+
+      return { number: pr.number, url: pr.html_url };
+    } catch (error: any) {
+      logger.error(`Failed to create PR on ${owner}/${repo}:`, error.message);
+      throw new Error(`Failed to create pull request: ${error.message}`);
+    }
+  }
+
   /**
    * Commit and push changes in one operation
    * Convenience method that combines commit + push
