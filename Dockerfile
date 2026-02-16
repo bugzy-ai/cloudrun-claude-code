@@ -48,6 +48,7 @@ RUN echo 'deb http://deb.debian.org/debian bookworm-backports main' > /etc/apt/s
 
 # Set browser path to shared location accessible by all users
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+ENV PLAYWRIGHT_MCP_BROWSER=chromium
 
 # Disable Claude Code auto-updater (container images should be immutable)
 ENV DISABLE_AUTOUPDATER=1
