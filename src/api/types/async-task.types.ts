@@ -114,6 +114,33 @@ export interface AsyncTaskResult {
     branch: string;
   };
 
+  /** Billing tracking data collected from workspace after execution */
+  billing?: {
+    /** New test case .md files added in test-cases/ during this execution */
+    testCaseCreations?: string[];
+
+    /** Test runs with their test case counts (from manifest.json) */
+    testRuns?: Array<{
+      timestamp: string;
+      testCaseCount: number;
+      manifest: Record<string, any>;
+    }>;
+
+    /** Failure classifications from latest manifest */
+    newFailures?: Array<{
+      id: string;
+      name: string;
+      error: string | null;
+      lastPassedRun: string | null;
+    }>;
+    knownFailures?: Array<{
+      id: string;
+      name: string;
+      error: string | null;
+      lastPassedRun: string | null;
+    }>;
+  };
+
   /** Git commit information (if postExecutionActions.git was requested) */
   gitCommit?: {
     /** Commit SHA */

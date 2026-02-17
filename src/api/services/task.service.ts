@@ -1,4 +1,5 @@
 import path from "path";
+import fs from "fs";
 import crypto from "crypto";
 import { execSync } from "child_process";
 import { ClaudeRunner, ClaudeOptions } from "../../claude-runner.js";
@@ -300,7 +301,51 @@ export class TaskService {
       configFiles = ['prompt.txt'];
     }
 
+    // Pre-create playwright-cli browser config so agent doesn't waste turns debugging
+    this.setupPlaywrightCliConfig(workspaceRoot, logPrefix);
+    configFiles.push('.playwright/cli.config.json');
+
     return { workspaceRoot, sshKeyPath, configFiles };
+  }
+
+  /**
+   * Pre-create .playwright/cli.config.json so playwright-cli uses the container's
+   * pre-installed Chromium instead of defaulting to Google Chrome (which isn't installed).
+   * Non-fatal — if chromium isn't found the agent can still self-fix.
+   */
+  private setupPlaywrightCliConfig(workspaceRoot: string, logPrefix: string = ''): void {
+    try {
+      const browsersPath = process.env.PLAYWRIGHT_BROWSERS_PATH || '/opt/ms-playwright';
+      if (!fs.existsSync(browsersPath)) {
+        logger.warn(`${logPrefix} Playwright browsers path not found: ${browsersPath}`);
+        return;
+      }
+
+      // Find the latest chromium-* directory
+      const entries = fs.readdirSync(browsersPath).filter(e => e.startsWith('chromium-')).sort();
+      if (entries.length === 0) {
+        logger.warn(`${logPrefix} No chromium-* directories found in ${browsersPath}`);
+        return;
+      }
+
+      const chromiumDir = entries[entries.length - 1]; // latest revision
+      const executablePath = path.join(browsersPath, chromiumDir, 'chrome-linux64', 'chrome');
+      if (!fs.existsSync(executablePath)) {
+        logger.warn(`${logPrefix} Chromium binary not found at ${executablePath}`);
+        return;
+      }
+
+      const configDir = path.join(workspaceRoot, '.playwright');
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(configDir, 'cli.config.json'),
+        JSON.stringify({ executablePath }, null, 2) + '\n'
+      );
+
+      logger.info(`${logPrefix} ✓ Created .playwright/cli.config.json → ${executablePath}`);
+    } catch (error: any) {
+      logger.warn(`${logPrefix} Failed to setup playwright-cli config: ${error.message}`);
+    }
   }
 
   /**

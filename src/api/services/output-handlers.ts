@@ -1,5 +1,7 @@
 import { Request, Response } from "express";
 import axios from "axios";
+import fs from "fs";
+import path from "path";
 import { ClaudeRunResult } from "../../claude-runner.js";
 import { GCSLoggerService, TaskLogger } from "./gcs.service.js";
 import { GitService } from "./git.service.js";
@@ -501,6 +503,17 @@ export class GCSOutputHandler implements OutputHandler {
       }
     }
 
+    // Collect billing data from workspace (after git operations so we have final state)
+    let billing: AsyncTaskResult['billing'];
+    if (result.exitCode === 0 && this.workspaceRoot) {
+      try {
+        billing = await this.collectBillingData();
+      } catch (billingError: any) {
+        logger.error(`[TASK ${this.taskId}] Failed to collect billing data:`, billingError.message);
+        // Continue - billing data is optional
+      }
+    }
+
     // Call webhook (only for async tasks with callback URL)
     if (this.callbackUrl) {
       // Prepare callback payload
@@ -520,7 +533,8 @@ export class GCSOutputHandler implements OutputHandler {
         metadata: this.metadata,
         externalRepoPR,
         uploadedFiles,
-        gitCommit
+        gitCommit,
+        billing
       };
 
       // Call webhook
@@ -652,6 +666,91 @@ export class GCSOutputHandler implements OutputHandler {
         logger.warn(`[TASK ${this.taskId}] Failed to read MCP error log for '${server.name}': ${err.message}`);
       });
     }
+  }
+
+  /**
+   * Collect billing data from workspace filesystem after execution
+   * This is the source of truth - the container knows exactly what was created/changed
+   */
+  private async collectBillingData(): Promise<AsyncTaskResult['billing']> {
+    if (!this.workspaceRoot) return undefined;
+
+    const billing: NonNullable<AsyncTaskResult['billing']> = {};
+
+    // Get files changed in the last commit (source of truth for what this execution did)
+    const git = simpleGit(this.workspaceRoot);
+    let commitAddedFiles: string[] = [];
+    let commitChangedFiles: string[] = [];
+
+    try {
+      // Added files only (for test case creations)
+      const addedOutput = await git.diff(['--name-only', '--diff-filter=A', 'HEAD~1', 'HEAD']);
+      commitAddedFiles = addedOutput.trim().split('\n').filter(f => f);
+
+      // Added + modified files (for test run manifests)
+      const changedOutput = await git.diff(['--name-only', '--diff-filter=AM', 'HEAD~1', 'HEAD']);
+      commitChangedFiles = changedOutput.trim().split('\n').filter(f => f);
+    } catch {
+      // HEAD~1 doesn't exist (first commit) — treat all tracked files as new
+      logger.info(`[TASK ${this.taskId}] Billing: first commit, using git status for file list`);
+      try {
+        const status = await git.status();
+        commitAddedFiles = [...status.created, ...status.not_added];
+        commitChangedFiles = commitAddedFiles;
+      } catch (statusError: any) {
+        logger.warn(`[TASK ${this.taskId}] Billing: failed to get git status:`, statusError.message);
+      }
+    }
+
+    // 1. Detect new test case files from the last commit
+    const newTestCaseFiles = commitAddedFiles.filter(f =>
+      f.startsWith('test-cases/') && f.endsWith('.md')
+    );
+    if (newTestCaseFiles.length > 0) {
+      billing.testCaseCreations = newTestCaseFiles;
+      logger.info(`[TASK ${this.taskId}] Billing: found ${newTestCaseFiles.length} new test case files`);
+    }
+
+    // 2. Read test run manifests that were added/modified in the last commit only
+    const newManifestPaths = commitChangedFiles.filter(f =>
+      f.startsWith('test-runs/') && f.endsWith('/manifest.json')
+    );
+
+    if (newManifestPaths.length > 0) {
+      const testRuns: NonNullable<AsyncTaskResult['billing']>['testRuns'] = [];
+
+      for (const manifestRel of newManifestPaths) {
+        const manifestPath = path.join(this.workspaceRoot, manifestRel);
+        // Extract timestamp from path: test-runs/{timestamp}/manifest.json
+        const timestamp = manifestRel.split('/')[1];
+
+        try {
+          const manifestContent = fs.readFileSync(manifestPath, 'utf-8');
+          const manifest = JSON.parse(manifestContent);
+          const testCaseCount = manifest.stats?.totalTests || manifest.testCases?.length || 0;
+
+          testRuns.push({ timestamp, testCaseCount, manifest });
+
+          // Extract failure classifications from the manifest
+          if (manifest.new_failures && manifest.new_failures.length > 0) {
+            billing.newFailures = manifest.new_failures;
+          }
+          if (manifest.known_failures && manifest.known_failures.length > 0) {
+            billing.knownFailures = manifest.known_failures;
+          }
+        } catch (parseError: any) {
+          logger.warn(`[TASK ${this.taskId}] Billing: failed to parse manifest ${manifestRel}:`, parseError.message);
+        }
+      }
+
+      if (testRuns.length > 0) {
+        billing.testRuns = testRuns;
+        logger.info(`[TASK ${this.taskId}] Billing: found ${testRuns.length} test runs from last commit`);
+      }
+    }
+
+    // Only return billing if we found something
+    return Object.keys(billing).length > 0 ? billing : undefined;
   }
 
   private async callWebhook(payload: AsyncTaskResult): Promise<void> {
