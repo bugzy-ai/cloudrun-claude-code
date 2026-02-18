@@ -72,6 +72,7 @@ RUN . /tmp/.package-versions.env && \
   @bugzy-ai/resend-mcp-server \
   @bugzy-ai/github-mcp-server \
   @bugzy-ai/azure-devops-mcp-server \
+  @bugzy-ai/asana-mcp-server \
   && npm cache clean --force
 
 # Install Playwright browsers for both consumers:
