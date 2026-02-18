@@ -302,49 +302,43 @@ export class TaskService {
     }
 
     // Pre-create playwright-cli browser config so agent doesn't waste turns debugging
-    this.setupPlaywrightCliConfig(workspaceRoot, logPrefix);
-    configFiles.push('.playwright/cli.config.json');
-
     return { workspaceRoot, sshKeyPath, configFiles };
   }
 
   /**
-   * Pre-create .playwright/cli.config.json so playwright-cli uses the container's
-   * pre-installed Chromium instead of defaulting to Google Chrome (which isn't installed).
-   * Non-fatal — if chromium isn't found the agent can still self-fix.
+   * Find the pre-installed Chromium binary path for playwright-cli.
+   * Returns the path or undefined if not found.
    */
-  private setupPlaywrightCliConfig(workspaceRoot: string, logPrefix: string = ''): void {
+  private findPlaywrightChromium(logPrefix: string = ''): string | undefined {
     try {
       const browsersPath = process.env.PLAYWRIGHT_BROWSERS_PATH || '/opt/ms-playwright';
       if (!fs.existsSync(browsersPath)) {
         logger.warn(`${logPrefix} Playwright browsers path not found: ${browsersPath}`);
-        return;
+        return undefined;
       }
 
-      // Find the latest chromium-* directory
       const entries = fs.readdirSync(browsersPath).filter(e => e.startsWith('chromium-')).sort();
       if (entries.length === 0) {
         logger.warn(`${logPrefix} No chromium-* directories found in ${browsersPath}`);
-        return;
+        return undefined;
       }
 
       const chromiumDir = entries[entries.length - 1]; // latest revision
-      const executablePath = path.join(browsersPath, chromiumDir, 'chrome-linux64', 'chrome');
-      if (!fs.existsSync(executablePath)) {
-        logger.warn(`${logPrefix} Chromium binary not found at ${executablePath}`);
-        return;
+      const candidates = ['chrome-linux', 'chrome-linux64'];
+      const subdir = candidates.find(d =>
+        fs.existsSync(path.join(browsersPath, chromiumDir, d, 'chrome'))
+      );
+      if (!subdir) {
+        logger.warn(`${logPrefix} Chromium binary not found in ${chromiumDir} (tried: ${candidates.join(', ')})`);
+        return undefined;
       }
 
-      const configDir = path.join(workspaceRoot, '.playwright');
-      fs.mkdirSync(configDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(configDir, 'cli.config.json'),
-        JSON.stringify({ executablePath }, null, 2) + '\n'
-      );
-
-      logger.info(`${logPrefix} ✓ Created .playwright/cli.config.json → ${executablePath}`);
+      const executablePath = path.join(browsersPath, chromiumDir, subdir, 'chrome');
+      logger.info(`${logPrefix} ✓ Found Chromium at ${executablePath}`);
+      return executablePath;
     } catch (error: any) {
-      logger.warn(`${logPrefix} Failed to setup playwright-cli config: ${error.message}`);
+      logger.warn(`${logPrefix} Failed to find Chromium: ${error.message}`);
+      return undefined;
     }
   }
 
@@ -389,6 +383,13 @@ export class TaskService {
     if (sshKeyPath) {
       claudeEnv.GIT_SSH_COMMAND = `ssh -i ${sshKeyPath} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null`;
       logger.debug(`${logPrefix} GIT_SSH_COMMAND configured`);
+    }
+
+    // Point playwright-cli at pre-installed Chromium and disable sandbox for container
+    const chromiumPath = this.findPlaywrightChromium(logPrefix);
+    if (chromiumPath) {
+      claudeEnv.PLAYWRIGHT_MCP_EXECUTABLE_PATH = chromiumPath;
+      claudeEnv.PLAYWRIGHT_MCP_SANDBOX = 'false';
     }
 
     return claudeEnv;
